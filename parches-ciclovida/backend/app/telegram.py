@@ -172,23 +172,30 @@ def procesar_updates(session: Session) -> None:
     updates = _api("getUpdates", offset=_offset, timeout=0) or []
     for u in updates:
         _offset = max(_offset, u["update_id"] + 1)
-        try:
-            if "callback_query" in u:
-                cq = u["callback_query"]
-                _api("answerCallbackQuery", callback_query_id=cq["id"])
-                msg = cq.get("message") or {}
-                chat_id = str((msg.get("chat") or {}).get("id", ""))
-                if chat_id:
-                    atender_boton(session, chat_id, cq.get("data") or "", msg.get("message_id"))
-                continue
-            msg = u.get("message") or {}
-            texto = (msg.get("text") or "").strip()
+        procesar_update(session, u)
+
+
+def procesar_update(session: Session, u: dict) -> None:
+    """Atiende un update recibido por webhook de Telegram."""
+    if not disponible():
+        return
+    try:
+        if "callback_query" in u:
+            cq = u["callback_query"]
+            _api("answerCallbackQuery", callback_query_id=cq["id"])
+            msg = cq.get("message") or {}
             chat_id = str((msg.get("chat") or {}).get("id", ""))
-            if chat_id and texto:
-                atender(session, chat_id, texto)
-        except Exception:  # un mensaje raro no debe tumbar a los demás
-            log.exception("Error atendiendo un update de Telegram")
-            session.rollback()
+            if chat_id:
+                atender_boton(session, chat_id, cq.get("data") or "", msg.get("message_id"))
+            return
+        msg = u.get("message") or {}
+        texto = (msg.get("text") or "").strip()
+        chat_id = str((msg.get("chat") or {}).get("id", ""))
+        if chat_id and texto:
+            atender(session, chat_id, texto)
+    except Exception:
+        log.exception("Error atendiendo un update de Telegram")
+        session.rollback()
 
 
 def _jovenes_de(session: Session, chat_id: str) -> list[Joven]:

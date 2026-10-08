@@ -2,6 +2,23 @@
   "version": 2,
   "buildCommand": "bash parches-ciclovida/app/tool/vercel_build.sh",
   "outputDirectory": "parches-ciclovida/app/build/web",
+  "functions": {
+    "api/index.py": {
+      "runtime": "python3.12"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

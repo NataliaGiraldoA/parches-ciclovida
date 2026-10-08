@@ -390,47 +390,43 @@ La IP también se puede cambiar dentro de la app: botón "Servidor" en la bienve
 
 Probado con Flutter 3.38.9: `flutter analyze` sin problemas, `flutter test` pasa y la versión web completa el flujo de registro, elección de parche y grupos del sábado contra el backend. Android e iOS no se han probado en un dispositivo.
 
-### 3. Desplegar el backend en Render y la app en Vercel
+### 3. Desplegar todo en Vercel
 
-`render.yaml`, en la raíz del repositorio (un nivel arriba de esta carpeta), mantiene el backend y el
-tablero en Render. `vercel.json`, en esa misma raíz, configura la compilación de la app Flutter Web
-en Vercel:
+`vercel.json`, en la raíz del repositorio (un nivel arriba de esta carpeta), configura la app Flutter
+Web, la API FastAPI, el Cron semanal y el webhook de Telegram en un solo proyecto de Vercel:
 
 | Servicio | Tipo | Qué es | Dirección por defecto |
 |---|---|---|---|
-| `parches-backend` | Web service (Python) | API, bot de Telegram y el reloj de la semana | `https://parches-backend.onrender.com` |
-| `parches-app` | Sitio estático en Vercel | La app Flutter compilada para web (sirve en el celular) | URL asignada por Vercel |
-| `parches-tablero` | Sitio estático en Render | El tablero de la Secretaría | `https://parches-tablero.onrender.com` |
+| `parches-app` | Sitio estático en Vercel | La app Flutter compilada para web | URL asignada por Vercel |
+| `/api/*` | Función Python en Vercel | API FastAPI | La misma URL de la app |
+| `/tablero/` | Sitio estático servido por FastAPI | Tablero de la Secretaría | La misma URL de la app |
 
 Pasos:
 
-1. Sube los cambios a GitHub. En Render: **New > Blueprint**, elige el repositorio y Render lee
-   `render.yaml`. Conserva allí `parches-backend` y `parches-tablero`; el backend no debe moverse a
-   una función serverless porque necesita SQLite, el reloj semanal y el bot de Telegram ejecutándose
-   de forma persistente.
-2. Render pide las variables sin valor. Todas se pueden dejar vacías:
-   - `ADMIN_KEY`: vacía queda `dedsec-demo`, la que trae la app para el chip **Demo**. Si pones otra,
-     escríbela en la app en Ajustes > Herramientas de demo.
-   - `TELEGRAM_TOKEN` y `GEMINI_API_KEY`: opcionales. Un token de Telegram solo lo puede usar un
-     backend a la vez, así que si lo pones aquí, quítalo del `.env` de los computadores.
-   - `API_URL` (en el tablero): la URL pública del backend. Vacía usa
-     `https://parches-backend.onrender.com`.
-3. Cuando termine, revisa la URL real del backend en su página de Render. Si no es
-   `https://parches-backend.onrender.com` (Render le agrega letras si el nombre está ocupado), pon
-   esa URL en `API_URL` de `parches-tablero`, y vuelve a desplegarlo (**Manual Deploy > Deploy latest
-   commit**).
-4. En Vercel: **Add New > Project**, importa el mismo repositorio y deja como raíz la raíz del
-   repositorio (la carpeta que contiene `render.yaml`). Vercel detectará `vercel.json`. En **Settings >
-   Environment Variables**, agrega `API_URL` con la URL pública del backend de Render y, si hace
-   falta, `FLUTTER_VERSION=3.38.9`. Luego pulsa **Deploy**. El primer build descarga el SDK de
-   Flutter y puede tardar varios minutos.
+1. Crea una base PostgreSQL en [Neon](https://neon.tech/) y copia su cadena de conexión.
+2. En Vercel: **Add New > Project**, importa el repositorio y deja como raíz la carpeta que contiene
+   `vercel.json`. Vercel detectará el build de Flutter y la función Python.
+3. En **Settings > Environment Variables**, agrega:
+   - `DATABASE_URL`: cadena de conexión de Neon.
+   - `SEMBRAR_AL_INICIAR=1`: carga los datos simulados y la cuenta demo.
+   - `CRON_SECRET`: secreto aleatorio para proteger el endpoint del Cron.
+   - `ADMIN_KEY`: opcional; vacía queda `dedsec-demo`.
+   - `TELEGRAM_TOKEN` y `GEMINI_API_KEY`: opcionales.
+   - `TELEGRAM_WEBHOOK_SECRET`: opcional, pero recomendado si activas Telegram.
+   - `FLUTTER_VERSION=3.38.9`: opcional.
+4. Pulsa **Deploy**. La app usará automáticamente la misma URL de Vercel para llamar a `/api`.
+   El primer build descarga el SDK de Flutter y puede tardar varios minutos.
+5. Si usas Telegram, registra el webhook una sola vez (reemplaza los valores):
+
+   ```text
+   https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<PROYECTO>.vercel.app/api/telegram/webhook&secret_token=<SECRETO>
+   ```
 
 Cómo queda cada uno:
 
-- **Backend.** Usa SQLite en el disco del servicio, que Render borra en cada despliegue, en cada
-  reinicio y cuando el plan gratis lo duerme. Al arrancar con la base vacía carga solo los 1.500
-  jóvenes simulados (`SEMBRAR_AL_INICIAR=1`, unos 20 s; en los logs sale "Datos simulados listos").
-  Las cuentas creadas en la demo se pierden cuando el servicio duerme o se redespliega.
+- **Backend.** Vercel ejecuta FastAPI como función serverless. Los datos viven en PostgreSQL de Neon,
+  no en el almacenamiento temporal de Vercel. `vercel.json` ejecuta `/api/cron` cada cinco minutos
+  para reemplazar el scheduler permanente.
 - **Cuenta demo** para recorrer la app sin registrarse: en la app, "Ya tengo cuenta" con
   `demo@usbcali.edu.co`, "Enviarme el código" y el código que sale en pantalla. Está inscrita en el
   parche con más gente de este domingo y trae cuatro domingos pasados con grupo y encuesta (historial
@@ -448,15 +444,13 @@ Cómo queda cada uno:
   simulados de su misma actividad (los más cercanos en estación, hora y ritmo) y queda inscrita al
   instante; el sábado (o "Armar los grupos" en la app) le sale su grupo. Aplica a todas las
   cuentas y actividades; se apaga con `RELLENAR_CON_SIMULADOS=0`.
-- **Plan gratis.** El backend se duerme tras 15 minutos sin visitas. La primera petición después
-  tarda cerca de un minuto: si la app muestra "No pudimos conectarnos", toca **Reintentar**. Antes
-  de presentar, abre `https://<backend>/api/salud` y espera el `{"ok":true}`. Mientras duerme,
-  tampoco corren el bot ni el reloj de la semana, y un mensaje de Telegram no lo despierta.
+- **Telegram.** En Vercel no se usa polling permanente: Telegram envía cada mensaje al webhook
+  `/api/telegram/webhook`. El Cron se ocupa del reloj y las notificaciones periódicas.
 - **App.** Vercel ejecuta `app/tool/vercel_build.sh`, descarga Flutter 3.38.9 y compila con
   `--dart-define=API_URL=…`. El primer despliegue tarda varios minutos. Con HTTPS, "Cómo llego" sí
   puede pedir la ubicación en el celular. Se puede agregar a la pantalla de inicio como una app.
-- **Tablero.** Es la misma carpeta `backend/static/tablero`: al construirse, Render escribe
-  `config.js` con la dirección del backend. En local lo sigue sirviendo el backend en `/tablero/`.
+- **Tablero.** Es la misma carpeta `backend/static/tablero`, servida por FastAPI en `/tablero/`.
+  En local también se puede abrir desde el backend en esa ruta.
 
 ## Guion de demo (3 minutos)
 

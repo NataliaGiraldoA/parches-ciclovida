@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 from contextlib import asynccontextmanager
@@ -8,7 +9,7 @@ from datetime import date
 from pathlib import Path
 from typing import Literal
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -751,7 +752,32 @@ def raiz():
 
 @app.get("/api/salud")
 def salud():
-    """Para el health check de Render: responde apenas el servidor está arriba."""
+    """Health check de la API."""
+    return {"ok": True}
+
+
+@app.post("/api/cron")
+def cron(request: Request, authorization: str | None = Header(default=None)):
+    """Ejecuta el reloj de la aplicación desde Vercel Cron."""
+    secreto = os.getenv("CRON_SECRET", "")
+    if secreto and authorization != f"Bearer {secreto}":
+        raise HTTPException(401, "Cron no autorizado")
+    with Session(engine) as session:
+        resultado = services.tick(session)
+        if telegram.disponible():
+            telegram.procesar_updates(session)
+    return {"ok": True, "resultado": resultado}
+
+
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """Recibe actualizaciones de Telegram sin polling persistente."""
+    secreto = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+    if secreto and request.headers.get("x-telegram-bot-api-secret-token") != secreto:
+        raise HTTPException(401, "Webhook no autorizado")
+    update = await request.json()
+    with Session(engine) as session:
+        telegram.procesar_update(session, update)
     return {"ok": True}
 
 

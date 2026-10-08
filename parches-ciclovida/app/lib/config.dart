@@ -4,9 +4,11 @@ import 'package:flutter/foundation.dart';
 ///   flutter run --dart-define=API_URL=http://192.168.1.20:8000
 /// o cambiar dentro de la app en Ajustes > Herramientas de demo.
 const String kApiUrlCompilada = String.fromEnvironment('API_URL');
+const bool kHostedOnVercel = bool.fromEnvironment('VERCEL', defaultValue: false);
 
 String apiUrlPorDefecto() {
   if (kApiUrlCompilada.isNotEmpty) return kApiUrlCompilada;
+  if (kIsWeb && kHostedOnVercel) return Uri.base.origin;
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
     return 'http://10.0.2.2:8000'; // el computador visto desde el emulador de Android
   }
