@@ -425,8 +425,8 @@ Pasos:
 Cómo queda cada uno:
 
 - **Backend.** Vercel ejecuta FastAPI como función serverless. Los datos viven en PostgreSQL de Neon,
-  no en el almacenamiento temporal de Vercel. `vercel.json` ejecuta `/api/cron` cada cinco minutos
-  para reemplazar el scheduler permanente.
+  no en el almacenamiento temporal de Vercel. `vercel.json` ejecuta `/api/cron` una vez al día en el
+  plan Hobby para reemplazar parcialmente el scheduler permanente.
 - **Cuenta demo** para recorrer la app sin registrarse: en la app, "Ya tengo cuenta" con
   `demo@usbcali.edu.co`, "Enviarme el código" y el código que sale en pantalla. Está inscrita en el
   parche con más gente de este domingo y trae cuatro domingos pasados con grupo y encuesta (historial
@@ -445,7 +445,9 @@ Cómo queda cada uno:
   instante; el sábado (o "Armar los grupos" en la app) le sale su grupo. Aplica a todas las
   cuentas y actividades; se apaga con `RELLENAR_CON_SIMULADOS=0`.
 - **Telegram.** En Vercel no se usa polling permanente: Telegram envía cada mensaje al webhook
-  `/api/telegram/webhook`. El Cron se ocupa del reloj y las notificaciones periódicas.
+  `/api/telegram/webhook`.   El Cron de Vercel Hobby se ejecuta una vez al día a las 05:00 UTC (00:00 en Cali) y se ocupa
+  del reloj y las notificaciones periódicas. Vercel Hobby no permite expresiones como `*/5 * * * *`;
+  para revisar esperas cada cinco minutos se necesita Vercel Pro o un servicio externo de cron.
 - **App.** Vercel ejecuta `app/tool/vercel_build.sh`, descarga Flutter 3.38.9 y compila con
   `--dart-define=API_URL=…`. El primer despliegue tarda varios minutos. Con HTTPS, "Cómo llego" sí
   puede pedir la ubicación en el celular. Se puede agregar a la pantalla de inicio como una app.
