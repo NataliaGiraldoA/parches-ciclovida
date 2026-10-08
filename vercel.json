@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "sh parches-ciclovida/app/tool/vercel_build.sh",
+  "buildCommand": "sh ./parches-ciclovida/app/tool/vercel_build.sh",
   "outputDirectory": "parches-ciclovida/app/build/web",
   "functions": {
     "api/index.py": {
