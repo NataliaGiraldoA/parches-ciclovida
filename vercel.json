@@ -2,6 +2,11 @@
   "version": 2,
   "buildCommand": "sh ./parches-ciclovida/app/tool/vercel_build.sh",
   "outputDirectory": "parches-ciclovida/app/build/web",
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "parches-ciclovida/backend/static/**"
+    }
+  },
   "crons": [
     {
       "path": "/api/cron",
@@ -11,6 +16,14 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/tablero",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/tablero/(.*)",
       "destination": "/api/index.py"
     }
   ],
