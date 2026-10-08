@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-# Construye Flutter Web para Vercel. El backend sigue siendo un servicio persistente en Render.
+#!/bin/sh
+# Construye Flutter Web para Vercel.
 set -euo pipefail
 
 API_URL="${API_URL:-}"
