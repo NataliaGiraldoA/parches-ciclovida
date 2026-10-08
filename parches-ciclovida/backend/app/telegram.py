@@ -101,7 +101,10 @@ def _api(metodo: str, **params):
         data = r.json()
         if not data.get("ok"):
             descripcion = data.get("description") or ""
-            if metodo == "getUpdates" and "Conflict" in descripcion:
+            if metodo == "getUpdates" and "webhook" in descripcion:
+                log.error("Este token tiene un webhook activo (el despliegue en Vercel): mientras exista, este "
+                          "backend no recibe mensajes por polling. Para probar en local usa otro bot (otro token).")
+            elif metodo == "getUpdates" and "Conflict" in descripcion:
                 _avisar_conflicto()
             else:
                 log.warning("Telegram rechazó %s: %s", metodo, descripcion)
@@ -134,10 +137,8 @@ def enviar(chat_id: str, texto: str, botones: Botones | None = None) -> None:
     _api("sendMessage", **params)
 
 
-def iniciar() -> str | None:
-    """Al arrancar el servidor: valida el token, resuelve el @ del bot y registra el menú."""
-    if not disponible():
-        return None
+def resolver_nombre() -> str | None:
+    """Pregunta a Telegram el @ del bot del token y lo deja en config.TELEGRAM_BOT."""
     yo = _api("getMe")
     if not yo:
         log.warning("TELEGRAM_TOKEN configurado pero getMe falló: revisa el token o la red")
@@ -145,10 +146,50 @@ def iniciar() -> str | None:
     real = yo.get("username", "")
     # El @ que dice Telegram manda: si el .env trae otro nombre, el enlace t.me
     # llevaría a un bot ajeno y el /start nunca llegaría a este.
-    if config.TELEGRAM_BOT and config.TELEGRAM_BOT.lstrip("@").lower() != real.lower():
+    if config.TELEGRAM_BOT and config.nombre_bot(config.TELEGRAM_BOT).lower() != real.lower():
         log.warning("TELEGRAM_BOT=%s no coincide con el bot del token (@%s): se usa @%s",
                     config.TELEGRAM_BOT, real, real)
     config.TELEGRAM_BOT = real
+    return real
+
+
+def iniciar() -> str | None:
+    """Al arrancar el servidor: valida el token, resuelve el @ del bot y registra el menú."""
+    if not disponible() or not resolver_nombre():
+        return None
+    _registrar_comandos()
+    log.info("Bot de Telegram listo: @%s", config.TELEGRAM_BOT)
+    return config.TELEGRAM_BOT
+
+
+def registrar_webhook(url: str) -> dict:
+    """Le dice a Telegram que mande los mensajes del bot a `url`, con el secreto que exige el webhook.
+
+    Hace falta una sola vez por dominio (y otra si cambia el secreto). En modo polling no se usa:
+    Telegram no deja leer con getUpdates mientras haya un webhook.
+    """
+    if not disponible():
+        raise RuntimeError("Falta TELEGRAM_TOKEN")
+    if not resolver_nombre():
+        raise RuntimeError("Telegram no reconoció el token (getMe falló): revisa TELEGRAM_TOKEN")
+    if _api("setWebhook", url=url, secret_token=config.TELEGRAM_WEBHOOK_SECRET,
+            allowed_updates=["message", "callback_query"]) is None:
+        raise RuntimeError("Telegram rechazó el webhook (setWebhook): revisa que la URL sea https y pública")
+    _registrar_comandos()
+    log.info("Webhook de Telegram registrado en %s para @%s", url, config.TELEGRAM_BOT)
+    return info_webhook() or {}
+
+
+def info_webhook() -> dict | None:
+    """Lo que Telegram sabe del webhook: a dónde manda, cuántos mensajes esperan y el último error."""
+    info = _api("getWebhookInfo")
+    if info is None:
+        return None
+    return {"url": info.get("url") or None, "pendientes": info.get("pending_update_count", 0),
+            "ultimo_error": info.get("last_error_message")}
+
+
+def _registrar_comandos() -> None:
     _api("setMyCommands", commands=[
         {"command": "parche", "description": "Tu parche, o uno para elegir ya"},
         {"command": "confirmo", "description": "Confirmar que vas"},
@@ -158,16 +199,18 @@ def iniciar() -> str | None:
         {"command": "desconectar", "description": "Soltar este chat de tu cuenta"},
         {"command": "ayuda", "description": "Qué puede hacer este bot"},
     ])
-    log.info("Bot de Telegram listo: @%s", config.TELEGRAM_BOT)
-    return config.TELEGRAM_BOT
 
 
 # ---------------------------------------------------------------- recepción
 
 def procesar_updates(session: Session) -> None:
-    """Lee los mensajes y toques de botón pendientes del bot y atiende cada uno."""
+    """Lee los mensajes y toques de botón pendientes del bot y atiende cada uno.
+
+    Solo en modo polling: con webhook, Telegram los manda a /api/telegram/webhook (y getUpdates
+    respondería "Conflict").
+    """
     global _offset
-    if not disponible():
+    if not disponible() or config.TELEGRAM_MODO == "webhook":
         return
     updates = _api("getUpdates", offset=_offset, timeout=0) or []
     for u in updates:

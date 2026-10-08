@@ -354,7 +354,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - Tablero: http://localhost:8000/tablero/ (muestra un aviso de "datos sintéticos" mientras existan)
 - API documentada: http://localhost:8000/docs
 - Reporte del emparejamiento: `python -m app.reporte` (ver "Datos simulados y reporte del emparejamiento")
-- Pruebas: `pytest` (64 pruebas: k-means, correo institucional, flujo completo, anonimato, reportes, permisos, match, bot de Telegram, datos simulados, reporte y chat del parche)
+- Pruebas: `pytest` (84 pruebas: k-means, correo institucional, flujo completo, anonimato, reportes, permisos, match, bot de Telegram, datos simulados, reporte, chat del parche y despliegue en Vercel: cuenta demo, webhook, cron y número de consultas)
 
 Variables útiles: `ADMIN_KEY` (por defecto `dedsec-demo`), `SECRETO`, `SEMBRAR_AL_INICIAR` (carga los simulados si la base arranca vacía), `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `CORREO_DEMO`, `PERMITIR_MENORES`, `REPORTES_PARA_SUSPENDER`, `K_CONTEO`, `GRUPO_MIN`, `GRUPO_MAX`, `PESO_QUIZ`, `DATABASE_URL`, `ESPERA_MINUTOS`, `TELEGRAM_TOKEN`, `TELEGRAM_BOT`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `FORO_MAX`, `CHAT_MAX_SIMULADOS`, `CHAT_PAUSA_SEG`, `CHAT_CHARLA_SEG`, `CHAT_CHARLA_MAX`, `CLIMA`.
 
@@ -408,19 +408,28 @@ Pasos:
    `vercel.json`. Vercel detectará el build de Flutter y la función Python.
 3. En **Settings > Environment Variables**, agrega:
    - `DATABASE_URL`: cadena de conexión de Neon.
-   - `SEMBRAR_AL_INICIAR=1`: carga los datos simulados y la cuenta demo.
+   - `SEMBRAR_AL_INICIAR=0`: en Vercel la base Neon se siembra una sola vez de forma manual; así
+     cada invocación serverless no intenta cargar datos ni crea carreras.
    - `CRON_SECRET`: secreto aleatorio para proteger el endpoint del Cron.
-   - `ADMIN_KEY`: opcional; vacía queda `dedsec-demo`.
+   - `ADMIN_KEY`: opcional; vacía queda `dedsec-demo`. Si la cambias, escríbela en la app en
+     Ajustes > Herramientas de demo para que funcionen "Armar los grupos" y "Terminar el domingo".
    - `TELEGRAM_TOKEN` y `GEMINI_API_KEY`: opcionales.
-   - `TELEGRAM_WEBHOOK_SECRET`: opcional, pero recomendado si activas Telegram.
+   - `TELEGRAM_BOT`: opcional, el nombre del bot (con o sin @). Si falta, se le pregunta a Telegram.
+   - `TELEGRAM_WEBHOOK_SECRET`: opcional; si no lo pones, se deriva del token.
    - `FLUTTER_VERSION=3.38.9`: opcional.
 4. Pulsa **Deploy**. La app usará automáticamente la misma URL de Vercel para llamar a `/api`.
    El primer build descarga el SDK de Flutter y puede tardar varios minutos.
-5. Si usas Telegram, registra el webhook una sola vez (reemplaza los valores):
+5. Si usas Telegram, registra el webhook una sola vez (y otra vez si cambias el token o el dominio).
+   En Vercel el bot no pregunta por mensajes: sin webhook, no recibe ninguno.
 
-   ```text
-   https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<PROYECTO>.vercel.app/api/telegram/webhook&secret_token=<SECRETO>
+   ```bash
+   curl -X POST -H "X-Admin-Key: <ADMIN_KEY>" https://<PROYECTO>.vercel.app/api/admin/telegram/webhook
    ```
+
+   Para revisar el estado del bot (webhook, mensajes pendientes, último error):
+   `curl -H "X-Admin-Key: <ADMIN_KEY>" https://<PROYECTO>.vercel.app/api/admin/telegram`. Mientras
+   el webhook exista, un backend local con el mismo token no recibe mensajes: para probar en local,
+   usa otro bot.
 
 Cómo queda cada uno:
 
@@ -430,8 +439,9 @@ Cómo queda cada uno:
 - **Cuenta demo** para recorrer la app sin registrarse: en la app, "Ya tengo cuenta" con
   `demo@usbcali.edu.co`, "Enviarme el código" y el código que sale en pantalla. Está inscrita en el
   parche con más gente de este domingo y trae cuatro domingos pasados con grupo y encuesta (historial
-  y racha con datos). El backend la crea al arrancar (y `python -m app.seed --reset` también), así
-  que no hace falta subir `parches.db` al repositorio.
+  y racha con datos). El backend la crea (o la repara, si la base se sembró con otro `SECRETO`) la
+  primera vez que alguien pide su código, así que no hace falta subir `parches.db` al repositorio ni
+  sembrarla aparte.
 - **Tablero para el reto.** Además de la operación, el tablero muestra lo que pide el reto (recuperar
   el tejido social y subir la participación universitaria): reparto modal (bici, patines, trotar,
   caminar), viajes de ocio de la comuna donde vive cada joven a la estación (matriz origen-destino,
@@ -445,9 +455,12 @@ Cómo queda cada uno:
   instante; el sábado (o "Armar los grupos" en la app) le sale su grupo. Aplica a todas las
   cuentas y actividades; se apaga con `RELLENAR_CON_SIMULADOS=0`.
 - **Telegram.** En Vercel no se usa polling permanente: Telegram envía cada mensaje al webhook
-  `/api/telegram/webhook`.   El Cron de Vercel Hobby se ejecuta una vez al día a las 05:00 UTC (00:00 en Cali) y se ocupa
-  del reloj y las notificaciones periódicas. Vercel Hobby no permite expresiones como `*/5 * * * *`;
-  para revisar esperas cada cinco minutos se necesita Vercel Pro o un servicio externo de cron.
+  `/api/telegram/webhook` (paso 5). El Cron de Vercel (llama `GET /api/cron`) en el plan Hobby se
+  ejecuta una vez al día a las 05:00 UTC (00:00 en Cali) y se ocupa del reloj y las notificaciones
+  periódicas. Vercel Hobby no permite expresiones como `*/5 * * * *`: con un solo llamado al día, los
+  grupos del sábado se arman a la medianoche y no a las 5:00 p. m. Para revisar esperas y armar los
+  grupos a tiempo se necesita Vercel Pro o un servicio externo de cron que llame `/api/cron` con el
+  encabezado `Authorization: Bearer <CRON_SECRET>`.
 - **App.** Vercel ejecuta `app/tool/vercel_build.sh`, descarga Flutter 3.38.9 y compila con
   `--dart-define=API_URL=…`. El primer despliegue tarda varios minutos. Con HTTPS, "Cómo llego" sí
   puede pedir la ubicación en el celular. Se puede agregar a la pantalla de inicio como una app.

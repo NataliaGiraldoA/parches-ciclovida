@@ -2,8 +2,13 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from . import config
 
-_args = {"check_same_thread": False} if config.DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(config.DATABASE_URL, connect_args=_args)
+if config.DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(config.DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    # Neon suspende la base tras unos minutos sin uso y cierra las conexiones abiertas. En Vercel la misma
+    # instancia de la función se reutiliza: sin pre_ping, la primera petición después de la pausa fallaría
+    # con una conexión muerta.
+    engine = create_engine(config.DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 
 
 def init_db() -> None:

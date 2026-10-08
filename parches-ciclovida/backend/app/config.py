@@ -1,3 +1,4 @@
+import hashlib
 import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -27,13 +28,18 @@ _cargar_env()
 TZ = ZoneInfo("America/Bogota")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./parches.db")
+# Neon entrega "postgresql://…" (a veces "postgres://…"): SQLAlchemy los manda a psycopg2, que no está
+# instalado. Solo está psycopg 3.
+for _prefijo in ("postgresql://", "postgres://"):
+    if DATABASE_URL.startswith(_prefijo):
+        DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL.removeprefix(_prefijo)
 # `or`: una variable definida pero vacía (p. ej. en Render) no deja la clave en blanco
 ADMIN_KEY = os.getenv("ADMIN_KEY") or "dedsec-demo"
 SCHEDULER_ON = os.getenv("SCHEDULER", "1") == "1"
 
-# Si la base arranca vacía, carga los jóvenes simulados al iniciar. En Render el disco se borra en
-# cada despliegue o reinicio: así la demo nunca sale en blanco.
-SEMBRAR_AL_INICIAR = os.getenv("SEMBRAR_AL_INICIAR", "0") == "1"
+# La siembra se ejecuta manualmente en Neon. En Vercel cada invocación puede iniciar una instancia
+# nueva; sembrar desde lifespan provocaría carreras, duplicados o truncados durante un despliegue.
+SEMBRAR_AL_INICIAR = os.getenv("SEMBRAR_AL_INICIAR", "0") == "1" and not os.getenv("VERCEL")
 
 # Si una persona real pide un parche sin gente (cualquier estación, hora o actividad), se le suman
 # jóvenes simulados para que el match salga de una; sin esto casi siempre queda en lista de espera.
@@ -74,8 +80,27 @@ ESPERA_MINUTOS = int(os.getenv("ESPERA_MINUTOS", "10"))
 
 # Bot de Telegram (opcional). Con el token y el nombre del bot, el joven vincula su cuenta
 # desde la app y recibe por Telegram el aviso cuando su espera encuentra parche.
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_BOT = os.getenv("TELEGRAM_BOT", "")  # nombre de usuario del bot, sin @
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+
+
+def nombre_bot(valor: str) -> str:
+    """El nombre de usuario del bot sin @: con @, t.me/@bot abre la portada de Telegram y no el bot."""
+    return valor.strip().lstrip("@")
+
+
+TELEGRAM_BOT = nombre_bot(os.getenv("TELEGRAM_BOT", ""))
+# Cómo le llegan los mensajes al bot. "polling": el backend los pide cada pocos segundos (servidor
+# encendido todo el tiempo, como en local). "webhook": Telegram los manda a /api/telegram/webhook; es
+# el único que sirve en Vercel, donde no hay un proceso vivo que pregunte.
+TELEGRAM_MODO = os.getenv("TELEGRAM_MODO") or ("webhook" if os.getenv("VERCEL") else "polling")
+# Telegram manda este secreto en cada llamada al webhook: sin él, cualquiera podría hacerse pasar por
+# Telegram (confirmar o publicar a nombre de otra persona). Si no se define, sale del token.
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip() or (
+    hashlib.sha256(f"webhook:{TELEGRAM_TOKEN}".encode()).hexdigest() if TELEGRAM_TOKEN else "")
+# Dirección pública del backend, para registrar el webhook. En Vercel sale sola del dominio de producción.
+URL_PUBLICA = (os.getenv("URL_PUBLICA") or (
+    f"https://{os.environ['VERCEL_PROJECT_PRODUCTION_URL']}" if os.getenv("VERCEL_PROJECT_PRODUCTION_URL") else "")
+).rstrip("/")
 
 # Bot conversacional (opcional): con la API key de Gemini, el bot entiende texto libre
 # ("quiero trotar el domingo temprano") y usa las mismas funciones del backend.

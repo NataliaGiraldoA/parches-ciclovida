@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import sys
 import threading
 from contextlib import asynccontextmanager
@@ -9,7 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import Literal
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -310,8 +311,13 @@ def joven_actual(authorization: str = Header(default=""), session: Session = Dep
     return joven
 
 
+def _iguales(dado: str | None, esperado: str) -> bool:
+    """Compara secretos en tiempo constante (y sin caerse si llegan caracteres raros en el encabezado)."""
+    return secrets.compare_digest((dado or "").encode(), esperado.encode())
+
+
 def admin(x_admin_key: str = Header(default="")) -> None:
-    if x_admin_key != config.ADMIN_KEY:
+    if not _iguales(x_admin_key, config.ADMIN_KEY):
         raise HTTPException(403, "Clave de administración incorrecta")
 
 
@@ -348,6 +354,12 @@ def aviso_privacidad():
 @app.post("/api/verificacion")
 def pedir_codigo(body: CorreoIn, session: Session = Depends(get_session)):
     """Envía un código de 6 dígitos al correo institucional. Sin servidor de correo (demo), lo devuelve."""
+    from .seed import DEMO_CORREO
+
+    if verificacion.normalizar(body.correo) == DEMO_CORREO:
+        # En Vercel no hay arranque que la cree: la cuenta demo se crea (o se repara, si la base viene de
+        # otro SECRETO) la primera vez que alguien la pide. Así tampoco se puede registrar como cuenta nueva.
+        _asegurar_demo()
     try:
         return verificacion.solicitar(session, body.correo, services.ahora(), para=body.para)
     except verificacion.CorreoInvalido as e:
@@ -515,7 +527,10 @@ def desconectar_telegram(joven: Joven = Depends(joven_actual), session: Session 
 @app.get("/api/yo/telegram")
 def telegram_estado(joven: Joven = Depends(joven_actual), session: Session = Depends(get_session)):
     """Estado del vínculo con el bot y el enlace t.me para crearlo. Sin bot configurado, se apaga."""
-    # hace falta el token Y el nombre del bot: sin nombre no se puede armar el enlace t.me
+    # hace falta el token Y el nombre del bot: sin nombre no se puede armar el enlace t.me. En Vercel no
+    # corre iniciar(), así que si TELEGRAM_BOT no está en las variables se le pregunta a Telegram aquí.
+    if telegram.disponible() and not config.TELEGRAM_BOT:
+        telegram.resolver_nombre()
     if not telegram.disponible() or not config.TELEGRAM_BOT:
         return {"disponible": False, "vinculado": False, "enlace": None, "bot": None}
     telegram.procesar_updates(session)  # así el vínculo se refleja apenas la app refresca
@@ -682,12 +697,41 @@ def admin_telegram(session: Session = Depends(get_session)):
         return {"configurado": False, "bot": None, "vinculados": vinculados, "conversacional": conversacional,
                 "falta": "Pon TELEGRAM_TOKEN en backend/.env (ver .env.example) y reinicia el servidor"}
     falta = None if config.TELEGRAM_BOT else "El token no respondió a getMe: revisa que sea el de @BotFather"
+    salida = {"configurado": True, "bot": config.TELEGRAM_BOT or None, "modo": config.TELEGRAM_MODO,
+              "vinculados": vinculados, "conversacional": conversacional}
+    if config.TELEGRAM_MODO == "webhook":
+        webhook = telegram.info_webhook()
+        if webhook is None:
+            falta = "Telegram no respondió getWebhookInfo: revisa TELEGRAM_TOKEN"
+        elif not webhook["url"]:
+            falta = ("Falta registrar el webhook: sin él, el bot no recibe ningún mensaje. "
+                     "Llama POST /api/admin/telegram/webhook con esta misma clave")
+        elif not webhook["url"].endswith("/api/telegram/webhook"):
+            falta = f"El webhook apunta a {webhook['url']}: vuelve a registrarlo con POST /api/admin/telegram/webhook"
+        return {**salida, "webhook": webhook, "falta": falta}
     otra = telegram.otra_instancia_reciente()
     if otra:
         falta = ("Otro programa está leyendo los mensajes con este mismo token: deja un solo backend con él "
                  "o genera un token nuevo con /revoke en @BotFather")
-    return {"configurado": True, "bot": config.TELEGRAM_BOT or None, "vinculados": vinculados,
-            "conversacional": conversacional, "otra_instancia_detectada": otra, "falta": falta}
+    return {**salida, "otra_instancia_detectada": otra, "falta": falta}
+
+
+@app.post("/api/admin/telegram/webhook", dependencies=[Depends(admin)])
+def admin_telegram_webhook(request: Request):
+    """Registra en Telegram el webhook del bot (modo webhook, el de Vercel). Basta una vez por dominio.
+
+    La dirección sale de URL_PUBLICA o, en Vercel, del dominio de producción; si no hay ninguna, del
+    dominio por el que llegó esta petición. Telegram solo acepta https.
+    """
+    base = config.URL_PUBLICA or f"https://{request.url.netloc}"
+    try:
+        info = telegram.registrar_webhook(f"{base}/api/telegram/webhook")
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    return {"ok": True, "bot": config.TELEGRAM_BOT, "webhook": info}
+
+
+@app.get("/api/admin/jornada", dependencies=[Depends(admin)])
 def admin_jornada(session: Session = Depends(get_session)):
     j = services.jornada_abierta(session)
     return {**services.resumen_jornada(session, j.fecha), "estado": j.estado}
@@ -756,26 +800,33 @@ def salud():
     return {"ok": True}
 
 
-@app.post("/api/cron")
-def cron(request: Request, authorization: str | None = Header(default=None)):
-    """Ejecuta el reloj de la aplicación desde Vercel Cron."""
+@app.api_route("/api/cron", methods=["GET", "POST"])
+def cron(authorization: str = Header(default="")):
+    """El reloj de la semana (cerrar el domingo, armar grupos el sábado, revisar esperas).
+
+    Vercel Cron lo llama con GET y el encabezado «Authorization: Bearer CRON_SECRET»; también sirve
+    POST, para llamarlo a mano o desde otro servicio de cron.
+    """
     secreto = os.getenv("CRON_SECRET", "")
-    if secreto and authorization != f"Bearer {secreto}":
+    if secreto and not _iguales(authorization, f"Bearer {secreto}"):
         raise HTTPException(401, "Cron no autorizado")
     with Session(engine) as session:
         resultado = services.tick(session)
-        if telegram.disponible():
-            telegram.procesar_updates(session)
     return {"ok": True, "resultado": resultado}
 
 
 @app.post("/api/telegram/webhook")
-async def telegram_webhook(request: Request):
-    """Recibe actualizaciones de Telegram sin polling persistente."""
-    secreto = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
-    if secreto and request.headers.get("x-telegram-bot-api-secret-token") != secreto:
+def telegram_webhook(update: dict = Body(...), x_telegram_bot_api_secret_token: str = Header(default="")):
+    """Telegram manda aquí cada mensaje y cada toque de botón del bot (modo webhook).
+
+    Síncrona a propósito: atender un mensaje llama a Telegram y a Gemini, y así FastAPI la corre en otro
+    hilo sin frenar las demás peticiones. Un mensaje que falla igual responde 200: si no, Telegram lo
+    reintentaría sin fin.
+    """
+    if not telegram.disponible():
+        raise HTTPException(404, "El bot de Telegram no está configurado")
+    if not _iguales(x_telegram_bot_api_secret_token, config.TELEGRAM_WEBHOOK_SECRET):
         raise HTTPException(401, "Webhook no autorizado")
-    update = await request.json()
     with Session(engine) as session:
         telegram.procesar_update(session, update)
     return {"ok": True}

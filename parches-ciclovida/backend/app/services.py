@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
 from statistics import median
 
+from sqlalchemy import func
 from sqlmodel import Session, delete, select
 
 from . import config
@@ -177,17 +178,25 @@ def _base_parche(s: Salida | Grupo) -> dict:
     }
 
 
-def _inscritos_por_salida(session: Session, fecha: date) -> dict[int, list[Joven]]:
+def _inscritos_por_salida(session: Session, fecha: date, salida_id: int | None = None) -> dict[int, list[Joven]]:
+    """La gente de cada parche del domingo (o de uno solo), en una sola consulta.
+
+    En Neon cada consulta es un viaje por la red: pedir a cada joven por separado eran ~750 consultas y
+    "Mi parche" tardaba más de 10 s.
+    """
+    q = (select(Inscripcion.salida_id, Joven).join(Joven, Joven.id == Inscripcion.joven_id)
+         .where(Inscripcion.jornada_fecha == fecha).order_by(Inscripcion.id))
+    if salida_id is not None:
+        q = q.where(Inscripcion.salida_id == salida_id)
     por_salida: dict[int, list[Joven]] = defaultdict(list)
-    for ins in session.exec(select(Inscripcion).where(Inscripcion.jornada_fecha == fecha)).all():
-        if (j := session.get(Joven, ins.joven_id)) is not None:
-            por_salida[ins.salida_id].append(j)
+    for sid, j in session.exec(q).all():
+        por_salida[sid].append(j)
     return por_salida
 
 
 def salida_json(session: Session, s: Salida, joven: Joven | None = None, inscritos: list[Joven] | None = None) -> dict:
     if inscritos is None:
-        inscritos = _inscritos_por_salida(session, s.jornada_fecha).get(s.id, [])
+        inscritos = _inscritos_por_salida(session, s.jornada_fecha, s.id).get(s.id, [])
     ritmo = _ritmo_mediano(inscritos)
     return {
         **_base_parche(s),
@@ -487,6 +496,16 @@ def _experiencia(session: Session, joven_id: str, antes_de: date) -> int:
     return len(idas)
 
 
+def _experiencias(session: Session, antes_de: date, ids: list[str] | None = None) -> dict[str, int]:
+    """Lo mismo que _experiencia para muchos jóvenes a la vez (todos, o solo `ids`), en una consulta."""
+    q = select(Encuesta.joven_id, func.count()).where(
+        Encuesta.asistio == True, Encuesta.jornada_fecha < antes_de,  # noqa: E712
+    ).group_by(Encuesta.joven_id)
+    if ids is not None:
+        q = q.where(Encuesta.joven_id.in_(ids))
+    return {joven_id: min(n, EXPERIENCIA_MAX) for joven_id, n in session.exec(q).all()}
+
+
 def respuestas_quiz(joven: Joven) -> dict[int, str] | None:
     """Lo que respondió en el quiz, {pregunta: opción}, o None si no lo respondió."""
     if not joven.quiz_respuestas:
@@ -531,10 +550,11 @@ def guardar_quiz(session: Session, joven: Joven, respuestas: dict[int, str]) -> 
     session.commit()
 
 
-def _participante(session: Session, joven: Joven, s: Salida) -> Participante:
+def _participante(session: Session, joven: Joven, s: Salida, experiencia: int | None = None) -> Participante:
+    if experiencia is None:
+        experiencia = _experiencia(session, joven.id, s.jornada_fecha)
     return Participante(id=joven.id, tramo=s.tramo_id, franja=s.franja, actividad=s.actividad, ritmo=joven.ritmo,
-                        rango_edad=joven.rango_edad, experiencia=_experiencia(session, joven.id, s.jornada_fecha),
-                        quiz=quiz_de(joven))
+                        rango_edad=joven.rango_edad, experiencia=experiencia, quiz=quiz_de(joven))
 
 
 def _nuevo_grupo(session: Session, s: Salida, nombre: str, nivel: str = "armado") -> Grupo:
@@ -558,14 +578,21 @@ def armar_grupos(session: Session, fecha: date) -> dict:
         return {**resumen_jornada(session, fecha), "movidos": 0}
 
     salidas = {s.id: s for s in session.exec(select(Salida).where(Salida.jornada_fecha == fecha)).all()}
-    inscripciones = {i.joven_id: i for i in session.exec(select(Inscripcion).where(Inscripcion.jornada_fecha == fecha)).all()}
+    # Inscripciones con su joven y la experiencia de todos, en tres consultas (no tres por persona: en Neon,
+    # "Armar los grupos" tardaba más de un minuto)
+    inscripciones: dict[str, Inscripcion] = {}
+    jovenes: dict[str, Joven] = {}
+    for ins, joven in session.exec(select(Inscripcion, Joven).join(Joven, Joven.id == Inscripcion.joven_id)
+                                   .where(Inscripcion.jornada_fecha == fecha).order_by(Inscripcion.id)).all():
+        inscripciones[joven.id], jovenes[joven.id] = ins, joven
+    experiencias = _experiencias(session, fecha)
     propuestas: dict[int, GrupoPropuesto] = {}
     for joven_id, ins in inscripciones.items():
-        joven, s = session.get(Joven, joven_id), salidas[ins.salida_id]
-        if joven is None or joven.suspendido:
+        joven, s = jovenes[joven_id], salidas[ins.salida_id]
+        if joven.suspendido:
             continue
         gp = propuestas.setdefault(s.id, GrupoPropuesto(s.tramo_id, s.segmento, s.franja, s.actividad, "moderado"))
-        gp.miembros.append(_participante(session, joven, s))
+        gp.miembros.append(_participante(session, joven, s, experiencias.get(joven.id, 0)))
     for gp in propuestas.values():
         gp.ritmo = RITMO_POR_ORDEN[round(median(p.ritmo_orden for p in gp.miembros))]
 
@@ -587,7 +614,9 @@ def armar_grupos(session: Session, fecha: date) -> dict:
             inscripciones[p.id].salida_id = nuevo_sid
             session.add(inscripciones[p.id])
 
-    # 2. k-means dentro de cada parche
+    # 2. k-means dentro de cada parche. Primero todos los grupos y después sus integrantes: dos INSERT por
+    # lotes en vez de uno por grupo (en Neon cada uno es un viaje por la red)
+    armados: list[tuple[Grupo, list[Participante]]] = []
     for sid, gp in propuestas.items():
         if not gp.miembros:
             continue
@@ -596,10 +625,14 @@ def armar_grupos(session: Session, fecha: date) -> dict:
         for idx, miembros in enumerate(grupos):
             nombre = s.nombre if len(grupos) == 1 else f"{s.nombre} {LETRAS[idx]}"
             nivel = "juntado" if any(p.id in ajustes for p in miembros) else "armado"
-            g = _nuevo_grupo(session, s, nombre, nivel)
-            for p in miembros:
-                session.add(Asignacion(grupo_id=g.id, joven_id=p.id, jornada_fecha=fecha,
-                                       ajustes=",".join(ajustes.get(p.id, []))))
+            armados.append((Grupo(jornada_fecha=s.jornada_fecha, salida_id=s.id, nombre=nombre, tramo_id=s.tramo_id,
+                                  segmento=s.segmento, franja=s.franja, actividad=s.actividad, nivel=nivel), miembros))
+    session.add_all([g for g, _ in armados])
+    session.flush()  # los grupos ya tienen id
+    for g, miembros in armados:
+        for p in miembros:
+            session.add(Asignacion(grupo_id=g.id, joven_id=p.id, jornada_fecha=fecha,
+                                   ajustes=",".join(ajustes.get(p.id, []))))
 
     jornada.estado = "emparejada"
     jornada.emparejada_en = ahora()
@@ -610,11 +643,11 @@ def armar_grupos(session: Session, fecha: date) -> dict:
     # dentro de la app y, si vinculó el bot, también al chat.
     from . import clima
 
-    for a in session.exec(select(Asignacion).where(Asignacion.jornada_fecha == fecha)).all():
-        joven = session.get(Joven, a.joven_id)
-        grupo = session.get(Grupo, a.grupo_id)
-        if joven is None or joven.sintetico or grupo is None:
-            continue
+    reales = session.exec(
+        select(Joven, Grupo).join(Asignacion, Asignacion.joven_id == Joven.id).join(Grupo, Grupo.id == Asignacion.grupo_id)
+        .where(Asignacion.jornada_fecha == fecha, Joven.sintetico == False).order_by(Asignacion.id)  # noqa: E712
+    ).all()
+    for joven, grupo in reales:
         tiempo = clima.resumen(fecha, grupo.franja)
         notificar(
             session, joven, "¡Tu grupo del domingo está listo!",
@@ -628,10 +661,14 @@ def armar_grupos(session: Session, fecha: date) -> dict:
 def _ubicar_tarde(session: Session, joven: Joven, s: Salida) -> None:
     """Quien se une después del sábado entra al grupo con cupo más parecido, o abre uno nuevo."""
     grupos = session.exec(select(Grupo).where(Grupo.salida_id == s.id).order_by(Grupo.id)).all()
-    miembros = []
-    for g in grupos:
-        ids = session.exec(select(Asignacion.joven_id).where(Asignacion.grupo_id == g.id)).all()
-        miembros.append([_participante(session, session.get(Joven, i), s) for i in ids if session.get(Joven, i)])
+    por_grupo: dict[int, list[Joven]] = defaultdict(list)
+    for grupo_id, j in session.exec(
+        select(Asignacion.grupo_id, Joven).join(Joven, Joven.id == Asignacion.joven_id)
+        .where(Asignacion.grupo_id.in_([g.id for g in grupos])).order_by(Asignacion.id)
+    ).all():
+        por_grupo[grupo_id].append(j)
+    experiencias = _experiencias(session, s.jornada_fecha, [j.id for js in por_grupo.values() for j in js])
+    miembros = [[_participante(session, j, s, experiencias.get(j.id, 0)) for j in por_grupo[g.id]] for g in grupos]
     idx = grupo_mas_cercano(_participante(session, joven, s), miembros, config.GRUPO_MAX)
     if idx is None:
         nombre = s.nombre if not grupos else f"{s.nombre} {LETRAS[len(grupos)]}"
