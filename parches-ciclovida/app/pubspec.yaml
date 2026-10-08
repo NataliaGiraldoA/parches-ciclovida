@@ -1,0 +1,51 @@
+name: parches_ciclovida
+description: "Parches CicloVida: jóvenes de Cali que van juntos a la CicloVida del domingo."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=3.38.1"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  http: ^1.2.0
+  shared_preferences: ^2.3.0
+  flutter_local_notifications: ^22.3.1
+  timezone: ^0.11.0
+  flutter_map: ^8.1.1
+  latlong2: ^0.9.1
+  url_launcher: ^6.3.1
+  geolocator: ^14.0.0
+  share_plus: ^13.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/img/
+  fonts:
+    - family: Barlow
+      fonts:
+        - asset: assets/fonts/Barlow-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Barlow-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Barlow-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Barlow-Bold.ttf
+          weight: 700
+    # Títulos. Bricolage Grotesque (tamaño óptico 96 pt), licencia en OFL-BricolageGrotesque.txt
+    - family: Bricolage
+      fonts:
+        - asset: assets/fonts/BricolageGrotesque-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/BricolageGrotesque-ExtraBold.ttf
+          weight: 800

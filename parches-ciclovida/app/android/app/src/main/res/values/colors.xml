@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Colores del logo de Parches CicloVida -->
+    <color name="ic_launcher_background">#20784E</color>
+    <color name="splash_background">#F7F3E5</color>
+</resources>

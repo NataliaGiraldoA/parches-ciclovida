@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parches CicloVida · Tablero</title>
+  <link rel="icon" type="image/png" href="img/parche-icono.png">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="franja-marca" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="top-in">
+      <img class="logo-cv" src="img/parche-logo.png" alt="Parches CicloVida">
+      <div class="rotulo-top">
+        <b>Tablero de seguimiento</b>
+        Secretaría del Deporte y la Recreación
+      </div>
+      <div class="top-acciones">
+        <p class="autoria">Propuesta del equipo Dedsec<br>Hackathon Smart City Expo Cali 2026</p>
+        <a class="btn-app" id="abrir-app" href="#" target="_blank" rel="noopener" hidden>Abrir la app</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="contexto" id="contexto" hidden aria-label="El problema y el valor público"></section>
+
+    <div id="aviso-sintetico" class="aviso" hidden>
+      <b>Datos sintéticos de demostración.</b> Se generaron para probar el tablero y mostrar cómo se vería con un piloto; no son resultados reales.
+    </div>
+
+    <div class="flujo" aria-label="Cómo llegan los datos de la app al tablero">
+      <div class="paso"><i><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#b0460b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg></i><span><b>En la app</b>un joven se registra, elige su parche y confirma</span></div>
+      <span class="flecha" aria-hidden="true">→</span>
+      <div class="paso"><i><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#0b7a3f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></i><span><b>Sin identidad</b>se agrega sin nombres ni ubicación exacta</span></div>
+      <span class="flecha" aria-hidden="true">→</span>
+      <div class="paso"><i><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#06708f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V11M12 20V4M19 20v-6"/></svg></i><span><b>Aquí, en segundos</b>los indicadores se actualizan solos</span></div>
+    </div>
+
+    <div class="controles">
+      <label>Jornada
+        <select id="jornada"></select>
+      </label>
+      <span id="estado-jornada" class="chip"></span>
+      <span class="vivo" id="vivo" title="El tablero consulta los datos de la app cada pocos segundos"><i></i>En vivo <small id="vivo-hora"></small></span>
+      <span class="spacer"></span>
+      <span class="solo-agregados">Solo datos agregados y anónimos</span>
+    </div>
+
+    <h2 class="seccion s1">Resumen de la jornada</h2>
+    <section class="kpis" id="kpis" aria-label="Indicadores de la jornada"></section>
+
+    <section class="lecturas" id="card-lecturas" hidden>
+      <h2>Qué le dice esto a la Secretaría</h2>
+      <ol id="lecturas"></ol>
+    </section>
+
+    <h2 class="seccion s4">Hábito y retorno: ¿vuelven?</h2>
+    <div class="grid">
+      <section class="card c7">
+        <h3>Retorno semana a semana</h3>
+        <p class="sub">De quienes fueron un domingo, qué porcentaje volvió al siguiente · y cuántos ya llevan 3 o más seguidos</p>
+        <div class="chart-box"><canvas id="retorno" role="img" aria-label="Retorno semana a semana y jóvenes con hábito, por domingo"></canvas></div>
+      </section>
+
+      <section class="card c5">
+        <h3>Domingos seguidos</h3>
+        <p class="sub">Quienes fueron esta jornada, según cuántos domingos seguidos llevan</p>
+        <div id="rachas" class="barras"></div>
+        <div class="mini" id="habito-mini"></div>
+      </section>
+
+      <section class="card c12">
+        <h3>Escenarios para la Secretaría</h3>
+        <p class="sub">Lo que mide el tablero y lo que se podría hacer con eso</p>
+        <div class="escenarios" id="escenarios"></div>
+      </section>
+    </div>
+
+    <h2 class="seccion s2">Quiénes participan y qué tejido se forma</h2>
+    <div class="grid">
+      <section class="card c5">
+        <h3>Comunidad universitaria</h3>
+        <p class="sub">Jóvenes con parche por universidad</p>
+        <div id="unis" class="barras"></div>
+        <div class="mini" id="tejido"></div>
+      </section>
+
+      <section class="card c7">
+        <h3>Línea base: quién llega y quién vuelve</h3>
+        <p class="sub">Jóvenes con parche cada domingo, nuevos frente a quienes ya habían salido antes con la app</p>
+        <div class="chart-box"><canvas id="base" role="img" aria-label="Jóvenes con parche por domingo: nuevos y recurrentes"></canvas></div>
+      </section>
+    </div>
+
+    <h2 class="seccion s3">Cómo se mueven: reparto modal y viajes de ocio</h2>
+    <div class="grid">
+      <section class="card c5">
+        <h3>Reparto modal</h3>
+        <p class="sub">Jóvenes con parche según su actividad</p>
+        <div id="familia" class="familia"></div>
+        <div id="modal" class="barras barras-grandes"></div>
+      </section>
+
+      <section class="card c7">
+        <h3>Viajes de ocio: de dónde a dónde</h3>
+        <p class="sub">Comuna donde vive → estación de la CicloVida · solo pares con <span class="kmin"></span> o más jóvenes</p>
+        <div id="od" class="barras barras-od"></div>
+        <p class="sub nota" id="od-ocultos"></p>
+      </section>
+    </div>
+
+    <h2 class="seccion s4">Territorio</h2>
+    <div class="grid">
+      <section class="card c6 card-mapa">
+        <h3>Estaciones de la CicloVida</h3>
+        <p class="sub">Tamaño del círculo: jóvenes con parche en esa estación</p>
+        <div id="mapa" class="mapa" role="img" aria-label="Mapa de estaciones con jóvenes emparejados"></div>
+      </section>
+
+      <section class="card c6">
+        <h3>Jóvenes por comuna</h3>
+        <p class="sub">Comuna donde vive cada joven · en color, quienes tuvieron parche</p>
+        <div id="comunas" class="barras barras-comuna"></div>
+        <details class="tabla-alt">
+          <summary>Ver como tabla</summary>
+          <div id="tabla-comunas"></div>
+        </details>
+      </section>
+    </div>
+
+    <h2 class="seccion s5">Cómo salió la jornada</h2>
+    <div class="grid">
+      <section class="card c4">
+        <h3>Del registro al domingo</h3>
+        <p class="sub">Cuántos jóvenes llegan a cada paso</p>
+        <div id="embudo" class="barras"></div>
+      </section>
+
+      <section class="card c4">
+        <h3>Asistencia y ganas de volver</h3>
+        <p class="sub">Porcentaje de quienes respondieron la encuesta</p>
+        <div class="leyenda" id="leyenda-tendencia"></div>
+        <div class="chart-box chico"><canvas id="tendencia" aria-label="Tendencia de asistencia y de quienes volverían" role="img"></canvas></div>
+      </section>
+
+      <section class="card c4">
+        <h3>¿Cómo se sintieron?</h3>
+        <p class="sub">De 1 (muy mal) a 5 (muy bien), de quienes fueron</p>
+        <div id="bienestar" class="columnas"></div>
+      </section>
+
+      <section class="card c12">
+        <div class="card-head">
+          <div>
+            <h3>Parches de la jornada</h3>
+            <p class="sub">Un renglón por grupo. Nunca se muestran nombres.</p>
+          </div>
+          <label class="filtro">Estación
+            <select id="filtro-tramo"><option value="">Todas</option></select>
+          </label>
+        </div>
+        <div class="tabla-scroll"><table id="grupos"></table></div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="pie">
+    <p id="nota-privacidad"></p>
+    <p>Insumo de apoyo para la Secretaría del Deporte y la Recreación; no es información oficial ni una decisión de la Alcaldía de Cali.
+    Prototipo TRL 3 del equipo Dedsec · Hackathon Smart City Expo Cali 2026 · Reto CicloVida.
+    Estaciones según boletines públicos de la Alcaldía; ubicaciones del mapa aproximadas.
+    Los reportes de seguridad se cuentan aquí, pero su contenido solo lo ve moderación.</p>
+  </footer>
+
+  <script src="vendor/chart.umd.min.js"></script>
+  <script src="vendor/leaflet.js"></script>
+  <script src="config.js"></script>
+  <script src="contexto.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
