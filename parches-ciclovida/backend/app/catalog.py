@@ -214,6 +214,7 @@ FORO_IDS = {c["id"] for c in FORO_CATEGORIAS}
 
 # Territorio inicial: universidades de Cali. Se acepta el dominio o cualquier subdominio
 # (u.icesi.edu.co entra por icesi.edu.co). Confirmar con cada universidad el dominio de sus estudiantes.
+# Cualquier otro correo .edu.co también entra, como "Otra universidad" (OTRA_UNIVERSIDAD, va de último).
 UNIVERSIDADES = [
     {"id": "univalle", "nombre": "Universidad del Valle", "corto": "Univalle",
      "dominios": ["correounivalle.edu.co", "univalle.edu.co"]},
@@ -229,6 +230,8 @@ UNIVERSIDADES = [
     {"id": "uniajc", "nombre": "Institución Universitaria Antonio José Camacho", "corto": "UNIAJC",
      "dominios": ["uniajc.edu.co"]},
 ]
+OTRA_UNIVERSIDAD = {"id": "otra", "nombre": "Otra universidad", "corto": "Otra universidad", "dominios": ["edu.co"]}
+UNIVERSIDADES.append(OTRA_UNIVERSIDAD)
 UNIVERSIDADES_POR_ID = {u["id"]: u for u in UNIVERSIDADES}
 
 
@@ -269,6 +272,6 @@ def catalogo() -> dict:
         "permite_menores": PERMITIR_MENORES,
         "motivos_reporte": MOTIVOS_REPORTE,
         "universidades": [{"id": u["id"], "nombre": u["nombre"], "corto": u["corto"], "dominios": u["dominios"]}
-                          for u in UNIVERSIDADES],
+                          for u in UNIVERSIDADES if u is not OTRA_UNIVERSIDAD],
         "jornada": {"inicio": JORNADA_INICIO, "fin": JORNADA_FIN, "dia": "domingo"},
     }

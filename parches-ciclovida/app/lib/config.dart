@@ -23,6 +23,12 @@ const bool kModoDemo = bool.fromEnvironment('DEMO', defaultValue: true);
 /// (backend/app/seed.py, DEMO_CORREO): este correo tiene que ser el mismo.
 const String kCorreoDemo = 'demo@usbcali.edu.co';
 
+/// Solo se entra con correo institucional (.edu.co), de cualquier universidad. El backend
+/// aplica la misma regla (backend/app/verificacion.py).
+final _correoEduCo = RegExp(r'^[^@\s]+@([a-z0-9-]+\.)+edu\.co$');
+bool esCorreoEduCo(String correo) => _correoEduCo.hasMatch(correo.trim().toLowerCase());
+const String kAvisoCorreoEduCo = 'Usa tu correo institucional: tiene que terminar en .edu.co';
+
 /// Clave de las acciones de demo (armar parches, cerrar jornada). Debe coincidir con ADMIN_KEY del backend.
 const String kClaveAdminPorDefecto = 'dedsec-demo';
 

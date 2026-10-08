@@ -1,4 +1,4 @@
-"""Filtro de confianza: solo estudiantes con correo institucional de una universidad de Cali.
+"""Filtro de confianza: solo estudiantes con correo institucional (.edu.co).
 
 El correo nunca se guarda. Se guarda su huella HMAC (para que un correo no abra dos cuentas)
 y la universidad. El código de 6 dígitos vence en CODIGO_MINUTOS y admite 5 intentos.
@@ -42,10 +42,9 @@ def universidad_valida(correo: str) -> dict:
     correo = normalizar(correo)
     if not CORREO_RE.match(correo):
         raise CorreoInvalido("Escribe un correo válido")
-    uni = universidad_de(correo)
-    if uni is None:
-        raise CorreoInvalido("Usa el correo institucional de tu universidad (por ejemplo, @usbcali.edu.co)")
-    return uni
+    if not correo.endswith(".edu.co"):
+        raise CorreoInvalido("Usa tu correo institucional: tiene que terminar en .edu.co")
+    return universidad_de(correo)  # las del piloto por su dominio; cualquier otra .edu.co es "Otra universidad"
 
 
 def solicitar(session: Session, correo: str, ahora, para: str = "registro") -> dict:

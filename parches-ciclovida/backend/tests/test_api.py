@@ -136,6 +136,9 @@ def test_correo_institucional():
     with TestClient(app) as c:
         r = c.post("/api/verificacion", json={"correo": "ana@gmail.com"})
         assert r.status_code == 422 and "institucional" in r.text
+        assert c.post("/api/verificacion", json={"correo": "ana@edu.co"}).status_code == 422
+        # cualquier .edu.co entra; si no es del piloto, queda como "Otra universidad"
+        assert c.post("/api/verificacion", json={"correo": "ana@unal.edu.co"}).json()["universidad"] == "Otra universidad"
         # los subdominios de estudiantes también cuentan
         assert c.post("/api/verificacion", json={"correo": "ana@u.icesi.edu.co"}).json()["universidad"] == "Universidad Icesi"
 

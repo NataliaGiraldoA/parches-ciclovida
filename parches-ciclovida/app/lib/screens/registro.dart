@@ -44,6 +44,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
   String? _correoEnviado;
   String? _universidad;
   String? _codigoDemo;
+  String? _errorCorreo;
   bool _pidiendoCodigo = false;
 
   String? _rango;
@@ -110,6 +111,10 @@ class _RegistroScreenState extends State<RegistroScreen> {
 
   Future<void> _pedirCodigo() async {
     FocusScope.of(context).unfocus();
+    if (!esCorreoEduCo(_correo.text)) {
+      setState(() => _errorCorreo = kAvisoCorreoEduCo);
+      return;
+    }
     setState(() => _pidiendoCodigo = true);
     try {
       final r = await Sesion.actual.api.pedirCodigo(_correo.text.trim());
@@ -326,8 +331,12 @@ class _RegistroScreenState extends State<RegistroScreen> {
         keyboardType: TextInputType.emailAddress,
         autocorrect: false,
         textInputAction: TextInputAction.send,
-        decoration: const InputDecoration(hintText: 'nombre@usbcali.edu.co'),
-        onChanged: (_) => setState(() {}),
+        decoration: InputDecoration(
+          hintText: 'nombre@usbcali.edu.co',
+          helperText: 'Solo correos que terminan en .edu.co',
+          errorText: _errorCorreo,
+        ),
+        onChanged: (_) => setState(() => _errorCorreo = null),
         onSubmitted: (_) => _correo.text.contains('@') ? _pedirCodigo() : null,
       ),
       const SizedBox(height: 12),
@@ -379,7 +388,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
           onChanged: (_) => setState(() {}),
         ),
       ],
-      const TituloSeccion('Universidades del piloto'),
+      const TituloSeccion('Universidades del piloto', ayuda: 'Si la tuya no está, igual entras con tu correo .edu.co.'),
       Wrap(
         spacing: 8,
         runSpacing: 8,

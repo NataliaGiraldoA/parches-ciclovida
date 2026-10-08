@@ -27,6 +27,7 @@ class _IngresoScreenState extends State<IngresoScreen> {
   String? _correoEnviado;
   String? _universidad;
   String? _codigoDemo;
+  String? _errorCorreo;
   bool _ocupado = false;
 
   @override
@@ -54,6 +55,10 @@ class _IngresoScreenState extends State<IngresoScreen> {
 
   Future<void> _pedirCodigo() async {
     FocusScope.of(context).unfocus();
+    if (!esCorreoEduCo(_correo.text)) {
+      setState(() => _errorCorreo = kAvisoCorreoEduCo);
+      return;
+    }
     setState(() => _ocupado = true);
     try {
       final r = await Sesion.actual.api.pedirCodigo(_correo.text.trim(), para: 'ingreso');
@@ -129,11 +134,13 @@ class _IngresoScreenState extends State<IngresoScreen> {
             controller: _correo,
             keyboardType: TextInputType.emailAddress,
             autocorrect: false,
-            onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
+            onChanged: (_) => setState(() => _errorCorreo = null),
+            decoration: InputDecoration(
               labelText: 'Correo institucional',
               hintText: 'tu@usbcali.edu.co',
-              prefixIcon: Icon(Icons.alternate_email),
+              helperText: 'Solo correos que terminan en .edu.co',
+              errorText: _errorCorreo,
+              prefixIcon: const Icon(Icons.alternate_email),
             ),
           ),
           const SizedBox(height: 12),
