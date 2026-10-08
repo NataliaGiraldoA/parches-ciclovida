@@ -242,11 +242,9 @@ def sembrar(total: int | None = None, semanas: int = 4, reset: bool = False, sem
             s.add(jornada)
             s.commit()
 
+        # el domingo abierto, con la mitad ya unida: lo mismo que se repite solo cada semana
         abierta = services.jornada_abierta(s)
-        for j in s.exec(select(Joven).where(Joven.sintetico == True).order_by(Joven.id)).all():  # noqa: E712
-            if rng.random() < 0.5:
-                _unir(s, j, abierta.fecha)
-        s.commit()
+        services.poblar_con_simulados(s, abierta.fecha)
         return {"jovenes": creados, "domingos": [str(d) for d in domingos], "proxima": str(abierta.fecha)}
 
 

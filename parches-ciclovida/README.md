@@ -354,7 +354,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - Tablero: http://localhost:8000/tablero/ (muestra un aviso de "datos sintéticos" mientras existan)
 - API documentada: http://localhost:8000/docs
 - Reporte del emparejamiento: `python -m app.reporte` (ver "Datos simulados y reporte del emparejamiento")
-- Pruebas: `pytest` (88 pruebas: k-means, correo institucional, flujo completo, anonimato, reportes, permisos, match, bot de Telegram, datos simulados, reporte, chat del parche y despliegue en Vercel: cuenta demo, webhook, cron y número de consultas)
+- Pruebas: `pytest` (89 pruebas: k-means, correo institucional, flujo completo, anonimato, reportes, permisos, match, bot de Telegram, datos simulados, reporte, chat del parche y despliegue en Vercel: cuenta demo, webhook, cron y número de consultas)
 
 Variables útiles: `ADMIN_KEY` (por defecto `dedsec-demo`), `SECRETO`, `SEMBRAR_AL_INICIAR` (carga los simulados si la base arranca vacía), `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `CORREO_DEMO`, `PERMITIR_MENORES`, `REPORTES_PARA_SUSPENDER`, `K_CONTEO`, `GRUPO_MIN`, `GRUPO_MAX`, `PESO_QUIZ`, `DATABASE_URL`, `ESPERA_MINUTOS`, `TELEGRAM_TOKEN`, `TELEGRAM_BOT`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `FORO_MAX`, `CHAT_MAX_SIMULADOS`, `CHAT_PAUSA_SEG`, `CHAT_CHARLA_SEG`, `CHAT_CHARLA_MAX`, `CLIMA`.
 
@@ -456,6 +456,11 @@ Cómo queda cada uno:
   simulados de su misma actividad (los más cercanos en estación, hora y ritmo) y queda inscrita al
   instante; el sábado (o "Armar los grupos" en la app) le sale su grupo. Aplica a todas las
   cuentas y actividades; se apaga con `RELLENAR_CON_SIMULADOS=0`.
+- **Simulados cada domingo.** La siembra en Neon se corre una sola vez y solo une a los simulados al
+  domingo abierto ese día. Para que el mapa y la lista no salgan en ceros las semanas siguientes (o
+  después de "Terminar el domingo"), el backend une a la mitad de los simulados a cada domingo nuevo
+  la primera vez que lo abre, con un candado de Postgres para que dos instancias no lo hagan a la vez.
+  Se apaga con `SIMULADOS_CADA_DOMINGO=0`.
 - **Telegram.** En Vercel no se usa polling permanente: Telegram envía cada mensaje al webhook
   `/api/telegram/webhook` (paso 5). El Cron de Vercel (llama `GET /api/cron`) en el plan Hobby se
   ejecuta una vez al día a las 05:00 UTC (00:00 en Cali) y se ocupa del reloj y las notificaciones

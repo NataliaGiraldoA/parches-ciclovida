@@ -1,5 +1,7 @@
 """Lo que necesita el despliegue en Vercel: cuenta demo sin arranque, webhook de Telegram, cron y pocas consultas."""
 
+from datetime import date
+
 from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlmodel import Session, select
@@ -183,6 +185,30 @@ def test_diagnostico_avisa_si_telegram_no_logra_entregar(monkeypatch):
     with TestClient(app) as c:
         info = c.get("/api/admin/telegram", headers=ADMIN).json()
     assert "401 Unauthorized" in info["falta"] and info["webhook"]["pendientes"] == 3
+
+
+def test_el_domingo_siguiente_tambien_arranca_con_simulados(monkeypatch):
+    """En Neon se siembra una sola vez: pasado ese domingo, el siguiente salía vacío y el mapa en ceros."""
+    from app import services
+    from app.models import Inscripcion
+
+    monkeypatch.setattr(services, "_simulados_revisados", set())
+    seed.sembrar(total=240, reset=True)
+    with TestClient(app) as c:
+        tok = nuevo(c, "Ana")
+
+        def gente_en_el_mapa():
+            return sum(p["inscritos"] for p in c.get("/api/parches", headers=auth(tok)).json()["parches"])
+
+        assert gente_en_el_mapa() > 60
+        siguiente = c.post("/api/admin/finalizar", headers=ADMIN).json()["siguiente"]
+        assert 80 < gente_en_el_mapa() < 160  # ~la mitad de los 240
+
+        # idempotente: llamarlo otra vez (otra instancia de Vercel) no duplica a nadie
+        with Session(engine) as s:
+            assert services.poblar_con_simulados(s, date.fromisoformat(siguiente)) == 0
+            ids = s.exec(select(Inscripcion.joven_id).where(Inscripcion.jornada_fecha == date.fromisoformat(siguiente))).all()
+            assert len(ids) == len(set(ids))
 
 
 def test_cron_de_vercel_llama_con_get_y_secreto(monkeypatch):

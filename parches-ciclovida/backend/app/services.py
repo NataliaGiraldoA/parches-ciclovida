@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import random
+import threading
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
 from statistics import median
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlmodel import Session, delete, select
 
 from . import config
@@ -19,6 +22,8 @@ from .models import (
     Asignacion, ChatMensaje, ChatMiembro, Encuesta, Espera, Grupo, Inscripcion, Jornada, Joven, MensajeForo,
     Notificacion, Reporte, Salida,
 )
+
+log = logging.getLogger("parches.servicios")
 
 RITMO_NOMBRE = {r["id"]: r["nombre"] for r in RITMOS}
 RITMO_POR_ORDEN = {r["orden"]: r["id"] for r in RITMOS}
@@ -82,7 +87,60 @@ def jornada_abierta(session: Session, momento: datetime | None = None) -> Jornad
         session.commit()
         session.refresh(j)
     asegurar_parches(session, j.fecha)
+    if config.SIMULADOS_CADA_DOMINGO and j.estado == "inscripcion" and j.fecha not in _simulados_revisados:
+        try:
+            poblar_con_simulados(session, j.fecha)
+        except Exception:  # la demo sin simulados es mejor que una petición caída
+            log.exception("No se pudieron sumar los simulados al domingo %s", j.fecha)
+            session.rollback()
+        _simulados_revisados.add(j.fecha)
     return j
+
+
+# Parte de los simulados que ya tiene parche a mitad de semana (lo mismo que deja la siembra).
+SIMULADOS_POR_DOMINGO = 0.5
+_simulados_revisados: set[date] = set()  # domingos que esta instancia ya revisó: una consulta por instancia
+_candado_simulados = threading.Lock()
+
+
+def poblar_con_simulados(session: Session, fecha: date) -> int:
+    """Une a los jóvenes simulados al domingo `fecha`, como hace la siembra con el que estaba abierto.
+
+    La siembra (en Neon, a mano y una sola vez) solo inscribe a los simulados en el domingo abierto ese
+    día: pasado ese domingo, o con «Terminar el domingo», el siguiente arrancaba vacío y el mapa salía en
+    ceros. Si menos de un cuarto de los simulados está inscrito, cada uno que falta se une con
+    probabilidad SIMULADOS_POR_DOMINGO al parche de su estación, hora y actividad (semilla por fecha: el
+    mismo domingo sale igual). Idempotente. Devuelve cuántos se unieron.
+    """
+    with _candado_simulados:
+        if session.get_bind().dialect.name == "postgresql":
+            # Vercel corre varias instancias a la vez: la primera llena el domingo y las demás esperan y
+            # ven que ya está. El candado se suelta con el commit.
+            session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": 2026_0000 + fecha.toordinal()})
+        simulados = session.exec(
+            select(Joven.id, Joven.tramo_id, Joven.franja, Joven.actividad, Joven.rango_edad, Joven.pausa_fecha)
+            .where(Joven.sintetico == True, Joven.suspendido == False).order_by(Joven.id)  # noqa: E712
+        ).all()
+        ya = set(session.exec(select(Inscripcion.joven_id).where(Inscripcion.jornada_fecha == fecha)).all())
+        if not simulados or sum(1 for x in simulados if x.id in ya) >= len(simulados) / 4:
+            session.commit()
+            return 0
+        salidas = {(s.tramo_id, s.franja, s.actividad, s.segmento): s.id
+                   for s in session.exec(select(Salida).where(Salida.jornada_fecha == fecha)).all()}
+        rng = random.Random(f"simulados:{fecha}")
+        nuevas = []
+        for x in simulados:
+            # el sorteo va primero: quién se une no depende de quién ya estaba
+            if rng.random() >= SIMULADOS_POR_DOMINGO or x.id in ya or x.pausa_fecha == fecha:
+                continue
+            sid = salidas.get((x.tramo_id, x.franja, x.actividad, SEGMENTO_EDAD[x.rango_edad]))
+            if sid is not None:
+                nuevas.append(Inscripcion(salida_id=sid, joven_id=x.id, jornada_fecha=fecha))
+        session.add_all(nuevas)  # un INSERT por lotes: en Neon, uno por persona serían cientos de viajes
+        session.commit()
+        if nuevas:
+            log.info("Domingo %s: %d jóvenes simulados se unieron a sus parches", fecha, len(nuevas))
+        return len(nuevas)
 
 
 def debe_armar(j: Jornada, momento: datetime) -> bool:

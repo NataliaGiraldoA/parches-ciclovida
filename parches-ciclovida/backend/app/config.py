@@ -46,6 +46,11 @@ SEMBRAR_AL_INICIAR = os.getenv("SEMBRAR_AL_INICIAR", "0") == "1" and not os.gete
 # Aplica a todas las cuentas. Con RELLENAR_CON_SIMULADOS=0 se apaga y vuelve la lista de espera.
 RELLENAR_CON_SIMULADOS = os.getenv("RELLENAR_CON_SIMULADOS", "1") == "1"
 
+# Cada domingo nuevo arranca con parte de los jóvenes simulados ya unidos, como deja la siembra el primero.
+# En Neon la siembra se corre una sola vez: sin esto, pasado ese domingo el mapa y la lista salían en ceros.
+# Solo actúa si en la base hay simulados. Con SIMULADOS_CADA_DOMINGO=0 se apaga.
+SIMULADOS_CADA_DOMINGO = os.getenv("SIMULADOS_CADA_DOMINGO", "1") == "1"
+
 GRUPO_MIN = int(os.getenv("GRUPO_MIN", "3"))
 GRUPO_OBJETIVO = int(os.getenv("GRUPO_OBJETIVO", "5"))
 GRUPO_MAX = int(os.getenv("GRUPO_MAX", "6"))
