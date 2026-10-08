@@ -110,6 +110,81 @@ def test_registrar_webhook_y_diagnostico(monkeypatch):
         assert "Falta registrar el webhook" in info["falta"] and info["webhook"]["pendientes"] == 4
 
 
+def _bot_en_webhook(monkeypatch, respuestas: dict) -> list[tuple[str, dict]]:
+    """Bot en modo webhook (Vercel), sin red: devuelve las llamadas que se le hacen a Telegram."""
+    llamadas: list[tuple[str, dict]] = []
+
+    def api(metodo, **params):
+        llamadas.append((metodo, params))
+        return respuestas.get(metodo)
+
+    monkeypatch.setattr(config, "TELEGRAM_TOKEN", "123:abc")
+    monkeypatch.setattr(config, "TELEGRAM_BOT", "Parcherito_bot")
+    monkeypatch.setattr(config, "TELEGRAM_MODO", "webhook")
+    monkeypatch.setattr(config, "TELEGRAM_WEBHOOK_SECRET", "secreto-de-prueba")
+    monkeypatch.setattr(config, "URL_PUBLICA", "https://parches.example")
+    monkeypatch.setattr(telegram, "_webhook_revisado", False)  # instancia recién arrancada
+    monkeypatch.setattr(telegram, "_webhook_rehecho", 0.0)
+    monkeypatch.setattr(telegram, "_api", api)
+    return llamadas
+
+
+def test_webhook_sin_registrar_se_registra_al_conectar_telegram(monkeypatch):
+    """Sin el paso manual del curl, el bot no recibía nada: al abrir «Conectar Telegram» se registra solo."""
+    respuestas = {"getMe": {"username": "Parcherito_bot"}, "setWebhook": True, "setMyCommands": True,
+                  "getWebhookInfo": {"url": "", "pending_update_count": 2}}
+    llamadas = _bot_en_webhook(monkeypatch, respuestas)
+    with TestClient(app) as c:
+        tok = nuevo(c, "Ana")
+        assert c.get("/api/yo/telegram", headers=auth(tok)).json()["disponible"] is True
+        registro = [p for m, p in llamadas if m == "setWebhook"]
+        assert registro == [{"url": "https://parches.example/api/telegram/webhook",
+                             "secret_token": "secreto-de-prueba", "allowed_updates": ["message", "callback_query"]}]
+
+        # una vez por instancia: refrescar la pantalla no vuelve a preguntarle a Telegram
+        llamadas.clear()
+        c.get("/api/yo/telegram", headers=auth(tok))
+        assert [m for m, _ in llamadas] == []
+
+
+def test_webhook_ya_registrado_no_se_toca(monkeypatch):
+    respuestas = {"getWebhookInfo": {"url": "https://parches.example/api/telegram/webhook", "pending_update_count": 0}}
+    llamadas = _bot_en_webhook(monkeypatch, respuestas)
+    with TestClient(app) as c:
+        tok = nuevo(c, "Ana")
+        c.get("/api/yo/telegram", headers=auth(tok))
+    assert [m for m, _ in llamadas] == ["getWebhookInfo"]
+
+
+def test_mensaje_con_otro_secreto_vuelve_a_registrar_el_webhook(monkeypatch):
+    """Un webhook registrado sin secreto (como antes) hacía que cada mensaje rebotara con 401."""
+    respuestas = {"getMe": {"username": "Parcherito_bot"}, "setWebhook": True, "setMyCommands": True,
+                  "getWebhookInfo": {"url": "https://parches.example/api/telegram/webhook", "pending_update_count": 1}}
+    llamadas = _bot_en_webhook(monkeypatch, respuestas)
+    update = {"update_id": 1, "message": {"chat": {"id": 555}, "text": "/ayuda"}}
+    with TestClient(app) as c:
+        # la URL coincide, así que la revisión normal no lo detecta: el secreto no se ve en getWebhookInfo
+        c.get("/api/yo/telegram", headers=auth(nuevo(c, "Ana")))
+        assert "setWebhook" not in [m for m, _ in llamadas]
+
+        assert c.post("/api/telegram/webhook", json=update).status_code == 401
+        assert [p["secret_token"] for m, p in llamadas if m == "setWebhook"] == ["secreto-de-prueba"]
+
+        # alguien insistiendo con otro secreto no lo hace registrar en cada llamada
+        llamadas.clear()
+        assert c.post("/api/telegram/webhook", json=update).status_code == 401
+        assert [m for m, _ in llamadas] == []
+
+
+def test_diagnostico_avisa_si_telegram_no_logra_entregar(monkeypatch):
+    respuestas = {"getWebhookInfo": {"url": "https://parches.example/api/telegram/webhook", "pending_update_count": 3,
+                                     "last_error_message": "Wrong response from the webhook: 401 Unauthorized"}}
+    _bot_en_webhook(monkeypatch, respuestas)
+    with TestClient(app) as c:
+        info = c.get("/api/admin/telegram", headers=ADMIN).json()
+    assert "401 Unauthorized" in info["falta"] and info["webhook"]["pendientes"] == 3
+
+
 def test_cron_de_vercel_llama_con_get_y_secreto(monkeypatch):
     monkeypatch.setenv("CRON_SECRET", "s3cr3t")
     with TestClient(app) as c:

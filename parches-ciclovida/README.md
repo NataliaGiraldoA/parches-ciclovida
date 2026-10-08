@@ -354,7 +354,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - Tablero: http://localhost:8000/tablero/ (muestra un aviso de "datos sintéticos" mientras existan)
 - API documentada: http://localhost:8000/docs
 - Reporte del emparejamiento: `python -m app.reporte` (ver "Datos simulados y reporte del emparejamiento")
-- Pruebas: `pytest` (84 pruebas: k-means, correo institucional, flujo completo, anonimato, reportes, permisos, match, bot de Telegram, datos simulados, reporte, chat del parche y despliegue en Vercel: cuenta demo, webhook, cron y número de consultas)
+- Pruebas: `pytest` (88 pruebas: k-means, correo institucional, flujo completo, anonimato, reportes, permisos, match, bot de Telegram, datos simulados, reporte, chat del parche y despliegue en Vercel: cuenta demo, webhook, cron y número de consultas)
 
 Variables útiles: `ADMIN_KEY` (por defecto `dedsec-demo`), `SECRETO`, `SEMBRAR_AL_INICIAR` (carga los simulados si la base arranca vacía), `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `CORREO_DEMO`, `PERMITIR_MENORES`, `REPORTES_PARA_SUSPENDER`, `K_CONTEO`, `GRUPO_MIN`, `GRUPO_MAX`, `PESO_QUIZ`, `DATABASE_URL`, `ESPERA_MINUTOS`, `TELEGRAM_TOKEN`, `TELEGRAM_BOT`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `FORO_MAX`, `CHAT_MAX_SIMULADOS`, `CHAT_PAUSA_SEG`, `CHAT_CHARLA_SEG`, `CHAT_CHARLA_MAX`, `CLIMA`.
 
@@ -419,8 +419,10 @@ Pasos:
    - `FLUTTER_VERSION=3.38.9`: opcional.
 4. Pulsa **Deploy**. La app usará automáticamente la misma URL de Vercel para llamar a `/api`.
    El primer build descarga el SDK de Flutter y puede tardar varios minutos.
-5. Si usas Telegram, registra el webhook una sola vez (y otra vez si cambias el token o el dominio).
-   En Vercel el bot no pregunta por mensajes: sin webhook, no recibe ninguno.
+5. Si usas Telegram, el webhook se registra solo: la primera vez que alguien abre «Conectar Telegram»
+   en la app (o corre el Cron), el backend le dice a Telegram a dónde mandar los mensajes, y si llega un
+   mensaje con otro secreto (un webhook viejo), lo vuelve a registrar. En Vercel el bot no pregunta por
+   mensajes: sin webhook, no recibe ninguno. Para forzarlo a mano:
 
    ```bash
    curl -X POST -H "X-Admin-Key: <ADMIN_KEY>" https://<PROYECTO>.vercel.app/api/admin/telegram/webhook

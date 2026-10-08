@@ -316,6 +316,12 @@ def _iguales(dado: str | None, esperado: str) -> bool:
     return secrets.compare_digest((dado or "").encode(), esperado.encode())
 
 
+def _base_publica(request: Request) -> str:
+    """Dirección pública del backend para el webhook: URL_PUBLICA o, en Vercel, el dominio de producción;
+    si no hay ninguna, el dominio por el que llegó esta petición."""
+    return config.URL_PUBLICA or f"https://{request.url.netloc}"
+
+
 def admin(x_admin_key: str = Header(default="")) -> None:
     if not _iguales(x_admin_key, config.ADMIN_KEY):
         raise HTTPException(403, "Clave de administración incorrecta")
@@ -525,7 +531,7 @@ def desconectar_telegram(joven: Joven = Depends(joven_actual), session: Session 
 
 
 @app.get("/api/yo/telegram")
-def telegram_estado(joven: Joven = Depends(joven_actual), session: Session = Depends(get_session)):
+def telegram_estado(request: Request, joven: Joven = Depends(joven_actual), session: Session = Depends(get_session)):
     """Estado del vínculo con el bot y el enlace t.me para crearlo. Sin bot configurado, se apaga."""
     # hace falta el token Y el nombre del bot: sin nombre no se puede armar el enlace t.me. En Vercel no
     # corre iniciar(), así que si TELEGRAM_BOT no está en las variables se le pregunta a Telegram aquí.
@@ -533,6 +539,8 @@ def telegram_estado(joven: Joven = Depends(joven_actual), session: Session = Dep
         telegram.resolver_nombre()
     if not telegram.disponible() or not config.TELEGRAM_BOT:
         return {"disponible": False, "vinculado": False, "enlace": None, "bot": None}
+    # En Vercel: antes de mandarle el enlace al bot, que Telegram sepa a dónde entregar su /start
+    telegram.asegurar_webhook(_base_publica(request))
     telegram.procesar_updates(session)  # así el vínculo se refleja apenas la app refresca
     session.refresh(joven)
     if joven.telegram_chat_id:
@@ -708,6 +716,11 @@ def admin_telegram(session: Session = Depends(get_session)):
                      "Llama POST /api/admin/telegram/webhook con esta misma clave")
         elif not webhook["url"].endswith("/api/telegram/webhook"):
             falta = f"El webhook apunta a {webhook['url']}: vuelve a registrarlo con POST /api/admin/telegram/webhook"
+        elif webhook["pendientes"] and webhook["ultimo_error"]:
+            # mensajes sin entregar: el webhook existe pero Telegram no logra que le respondamos bien
+            falta = (f"Telegram no logra entregar {webhook['pendientes']} mensaje(s): {webhook['ultimo_error']}. "
+                     "Con 401, vuelve a registrar el webhook (POST /api/admin/telegram/webhook); con otro error, "
+                     "revisa los logs de la función en Vercel")
         return {**salida, "webhook": webhook, "falta": falta}
     otra = telegram.otra_instancia_reciente()
     if otra:
@@ -720,12 +733,11 @@ def admin_telegram(session: Session = Depends(get_session)):
 def admin_telegram_webhook(request: Request):
     """Registra en Telegram el webhook del bot (modo webhook, el de Vercel). Basta una vez por dominio.
 
-    La dirección sale de URL_PUBLICA o, en Vercel, del dominio de producción; si no hay ninguna, del
-    dominio por el que llegó esta petición. Telegram solo acepta https.
+    En Vercel ya no hace falta llamarlo: el backend lo registra solo (ver telegram.asegurar_webhook).
+    Sirve para forzarlo a mano. Telegram solo acepta https.
     """
-    base = config.URL_PUBLICA or f"https://{request.url.netloc}"
     try:
-        info = telegram.registrar_webhook(f"{base}/api/telegram/webhook")
+        info = telegram.registrar_webhook(f"{_base_publica(request)}/api/telegram/webhook")
     except RuntimeError as e:
         raise HTTPException(503, str(e))
     return {"ok": True, "bot": config.TELEGRAM_BOT, "webhook": info}
@@ -801,7 +813,7 @@ def salud():
 
 
 @app.api_route("/api/cron", methods=["GET", "POST"])
-def cron(authorization: str = Header(default="")):
+def cron(request: Request, authorization: str = Header(default="")):
     """El reloj de la semana (cerrar el domingo, armar grupos el sábado, revisar esperas).
 
     Vercel Cron lo llama con GET y el encabezado «Authorization: Bearer CRON_SECRET»; también sirve
@@ -810,13 +822,15 @@ def cron(authorization: str = Header(default="")):
     secreto = os.getenv("CRON_SECRET", "")
     if secreto and not _iguales(authorization, f"Bearer {secreto}"):
         raise HTTPException(401, "Cron no autorizado")
+    telegram.asegurar_webhook(_base_publica(request))
     with Session(engine) as session:
         resultado = services.tick(session)
     return {"ok": True, "resultado": resultado}
 
 
 @app.post("/api/telegram/webhook")
-def telegram_webhook(update: dict = Body(...), x_telegram_bot_api_secret_token: str = Header(default="")):
+def telegram_webhook(request: Request, update: dict = Body(...),
+                     x_telegram_bot_api_secret_token: str = Header(default="")):
     """Telegram manda aquí cada mensaje y cada toque de botón del bot (modo webhook).
 
     Síncrona a propósito: atender un mensaje llama a Telegram y a Gemini, y así FastAPI la corre en otro
@@ -826,6 +840,9 @@ def telegram_webhook(update: dict = Body(...), x_telegram_bot_api_secret_token: 
     if not telegram.disponible():
         raise HTTPException(404, "El bot de Telegram no está configurado")
     if not _iguales(x_telegram_bot_api_secret_token, config.TELEGRAM_WEBHOOK_SECRET):
+        # Si es Telegram, el webhook se registró con otro secreto (o sin él, como antes): se rehace y
+        # Telegram reintenta este mismo mensaje con el secreto bueno.
+        telegram.asegurar_webhook(_base_publica(request), forzar=True)
         raise HTTPException(401, "Webhook no autorizado")
     with Session(engine) as session:
         telegram.procesar_update(session, update)

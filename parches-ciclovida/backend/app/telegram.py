@@ -27,6 +27,9 @@ from .models import Joven
 log = logging.getLogger("parches.telegram")
 _offset = 0  # último update procesado de getUpdates
 _ultimo_conflicto: float = 0.0  # cuándo Telegram avisó que otro programa lee con este mismo token
+_ultimo_rechazo = ""  # lo que dijo Telegram la última vez que rechazó una llamada
+_webhook_revisado = False  # esta instancia ya revisó a dónde manda Telegram los mensajes
+_webhook_rehecho: float = 0.0  # cuándo lo volvió a registrar porque llegó un mensaje con otro secreto
 
 
 def otra_instancia_reciente(segundos: int = 120) -> bool:
@@ -94,6 +97,7 @@ def enlace_web_para(codigo: str) -> str | None:
 
 
 def _api(metodo: str, **params):
+    global _ultimo_rechazo
     if not disponible():
         return None
     try:
@@ -101,6 +105,7 @@ def _api(metodo: str, **params):
         data = r.json()
         if not data.get("ok"):
             descripcion = data.get("description") or ""
+            _ultimo_rechazo = descripcion
             if metodo == "getUpdates" and "webhook" in descripcion:
                 log.error("Este token tiene un webhook activo (el despliegue en Vercel): mientras exista, este "
                           "backend no recibe mensajes por polling. Para probar en local usa otro bot (otro token).")
@@ -174,10 +179,43 @@ def registrar_webhook(url: str) -> dict:
         raise RuntimeError("Telegram no reconoció el token (getMe falló): revisa TELEGRAM_TOKEN")
     if _api("setWebhook", url=url, secret_token=config.TELEGRAM_WEBHOOK_SECRET,
             allowed_updates=["message", "callback_query"]) is None:
-        raise RuntimeError("Telegram rechazó el webhook (setWebhook): revisa que la URL sea https y pública")
+        raise RuntimeError(f"Telegram rechazó el webhook (setWebhook): {_ultimo_rechazo or 'sin respuesta'}. "
+                           "Revisa que la URL sea https y pública y que TELEGRAM_WEBHOOK_SECRET solo tenga letras, "
+                           "números, _ o -")
     _registrar_comandos()
     log.info("Webhook de Telegram registrado en %s para @%s", url, config.TELEGRAM_BOT)
     return info_webhook() or {}
+
+
+def asegurar_webhook(base: str, forzar: bool = False) -> None:
+    """Modo webhook (Vercel): deja el webhook registrado sin el paso manual.
+
+    Una vez por instancia revisa a dónde manda Telegram los mensajes y, si falta o apunta a otra parte,
+    lo registra. Con `forzar` (llegó un mensaje con otro secreto: el registro es viejo, p. ej. de antes
+    de exigir el secreto) lo vuelve a registrar sin preguntar, como mucho cada 10 minutos.
+    """
+    import time
+
+    global _webhook_revisado, _webhook_rehecho
+    if not disponible() or config.TELEGRAM_MODO != "webhook" or not base:
+        return
+    url = f"{base}/api/telegram/webhook"
+    if forzar:
+        if time.time() - _webhook_rehecho < 600:
+            return
+        _webhook_rehecho = time.time()
+        log.warning("Llegó un mensaje al webhook con otro secreto: se vuelve a registrar el webhook de Telegram")
+    else:
+        if _webhook_revisado:
+            return
+        _webhook_revisado = True
+        info = info_webhook()
+        if info is None or info["url"] == url:
+            return
+    try:
+        registrar_webhook(url)
+    except RuntimeError as e:
+        log.error("No se pudo registrar el webhook de Telegram: %s", e)
 
 
 def info_webhook() -> dict | None:
